@@ -1,0 +1,23 @@
+---
+- name: Update apt cache
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Install build toolchain and utilities
+  ansible.builtin.apt:
+    name: "{{ apt_build_packages }}"
+    state: present
+
+- name: Ensure en_US.UTF-8 is enabled in locale.gen
+  ansible.builtin.lineinfile:
+    path: /etc/locale.gen
+    regexp: '^#?\s*en_US\.UTF-8\s+UTF-8'
+    line: en_US.UTF-8 UTF-8
+    state: present
+  register: locale_line
+
+- name: Generate en_US.UTF-8 locale
+  ansible.builtin.command: locale-gen en_US.UTF-8
+  when: locale_line is changed
+  changed_when: true

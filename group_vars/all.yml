@@ -1,0 +1,113 @@
+---
+# Target architecture for this playbook (x86_64 / amd64 only).
+chef_build_arch: x86_64
+
+# Chef Infra Client source pin
+chef_git_repo: https://github.com/chef/chef.git
+chef_git_version: v19.4.14
+chef_src_dir: /home/{{ ansible_user }}/src/chef
+
+# Host Ruby via rbenv. Pin to 3.4.10 to match chef v19.4.14 Habitat plan
+# (core/ruby3_4/3.4.10). "latest" currently resolves to Ruby 4.x which is
+# too new for this Chef release.
+rbenv_ruby_version: "3.4.10"
+rbenv_root: /home/{{ ansible_user }}/.rbenv
+rbenv_repo: https://github.com/rbenv/rbenv.git
+ruby_build_repo: https://github.com/rbenv/ruby-build.git
+
+# Habitat CLI (local studio / future .hart packaging). Origin is only used
+# if/when you run `hab pkg build`; SaaS Builder is not required for CLI install.
+hab_origin: local
+hab_license: accept-no-persist
+
+# Accept Chef license non-interactively when verifying the built client.
+chef_license: accept-no-persist
+
+# Local .deb packaging (Docker, one artifact per Ubuntu LTS)
+chef_package_name: chef-infra-client
+chef_package_version: "{{ chef_git_version | regex_replace('^v', '') }}"
+chef_package_arch: amd64
+chef_package_maintainer: local-build
+chef_install_prefix: /opt/chef-infra-client
+chef_package_outdir: /home/{{ ansible_user }}/packages
+chef_package_work_root: /home/{{ ansible_user }}/.cache/chef-infra-client-deb
+chef_package_script_remote: /home/{{ ansible_user }}/.cache/chef-infra-client-deb/package-deb.sh
+# Which releases to build. Override via -e, e.g. chef_package_releases=['22.04']
+chef_package_releases:
+  - "22.04"
+  - "24.04"
+  - "26.04"
+
+# Per-release Docker images and runtime Depends (ABI / package-name safe).
+chef_package_targets:
+  - release: "22.04"
+    codename: jammy
+    image: ubuntu:22.04
+    runtime_depends:
+      - libssl3
+      - libyaml-0-2
+      - libffi8
+      - zlib1g
+      - libxml2
+      - libxslt1.1
+      - libarchive13
+      - libreadline8
+      - libncurses6
+      - libc6
+  - release: "24.04"
+    codename: noble
+    image: ubuntu:24.04
+    runtime_depends:
+      - libssl3t64 | libssl3
+      - libyaml-0-2
+      - libffi8
+      - zlib1g
+      - libxml2-16 | libxml2
+      - libxslt1.1
+      - libarchive13t64 | libarchive13
+      - libreadline8t64 | libreadline8
+      - libncurses6
+      - libc6
+  - release: "26.04"
+    codename: resolute
+    image: ubuntu:26.04
+    runtime_depends:
+      - libssl3t64 | libssl3
+      - libyaml-0-2
+      - libffi8
+      - zlib1g
+      - libxml2-16 | libxml2
+      - libxslt1.1
+      - libarchive13t64 | libarchive13
+      - libreadline8t64 | libreadline8
+      - libncurses6
+      - libc6
+
+# apt packages for host toolchain + native gem extensions (nokogiri, etc.)
+apt_build_packages:
+  - build-essential
+  - ca-certificates
+  - curl
+  - wget
+  - git
+  - gnupg
+  - pkg-config
+  - autoconf
+  - bison
+  - libssl-dev
+  - libreadline-dev
+  - zlib1g-dev
+  - libyaml-dev
+  - libffi-dev
+  - libxml2-dev
+  - libxslt1-dev
+  - libarchive-dev
+  - libncurses-dev
+  - libgdbm-dev
+  - libdb-dev
+  - xz-utils
+  - unzip
+  - locales
+  - software-properties-common
+  - rsync
+  - docker.io

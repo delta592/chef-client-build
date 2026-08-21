@@ -1,0 +1,78 @@
+---
+- name: Ensure source parent directory exists
+  become: false
+  ansible.builtin.file:
+    path: "{{ chef_src_dir | dirname }}"
+    state: directory
+    mode: "0755"
+
+- name: Clone Chef Infra Client source ({{ chef_git_version }})
+  become: false
+  ansible.builtin.git:
+    repo: "{{ chef_git_repo }}"
+    dest: "{{ chef_src_dir }}"
+    version: "{{ chef_git_version }}"
+    force: true
+    depth: 1
+
+- name: Configure bundler for native extensions
+  become: false
+  ansible.builtin.shell: |
+    set -euo pipefail
+    export PATH="{{ rbenv_root }}/bin:$PATH"
+    eval "$(rbenv init - bash)"
+    cd "{{ chef_src_dir }}"
+    bundle config set --local jobs "$(nproc)"
+    bundle config set --local retry 5
+    bundle config set --local without "server:docgen:maintenance:pry:travis:integration:ci"
+    bundle config set --local force_ruby_platform true
+  args:
+    executable: /bin/bash
+  changed_when: true
+
+- name: Bundle install Chef dependencies
+  become: false
+  ansible.builtin.shell: |
+    set -euo pipefail
+    export PATH="{{ rbenv_root }}/bin:$PATH"
+    eval "$(rbenv init - bash)"
+    export CHEF_LICENSE="{{ chef_license }}"
+    cd "{{ chef_src_dir }}"
+    bundle install --jobs="$(nproc)" --retry=3
+  args:
+    executable: /bin/bash
+  environment:
+    CHEF_LICENSE: "{{ chef_license }}"
+  register: bundle_install
+  changed_when: "'Installing' in bundle_install.stdout or 'Fetching' in bundle_install.stdout"
+
+- name: Post-bundle-install (git/path gems)
+  become: false
+  ansible.builtin.shell: |
+    set -euo pipefail
+    export PATH="{{ rbenv_root }}/bin:$PATH"
+    eval "$(rbenv init - bash)"
+    export CHEF_LICENSE="{{ chef_license }}"
+    cd "{{ chef_src_dir }}"
+    if [ -f ./post-bundle-install.rb ]; then
+      ruby ./post-bundle-install.rb
+    fi
+  args:
+    executable: /bin/bash
+  changed_when: true
+
+- name: Build and install Chef gems locally
+  become: false
+  ansible.builtin.shell: |
+    set -euo pipefail
+    export PATH="{{ rbenv_root }}/bin:$PATH"
+    eval "$(rbenv init - bash)"
+    export CHEF_LICENSE="{{ chef_license }}"
+    cd "{{ chef_src_dir }}"
+    bundle exec rake install:local
+  args:
+    executable: /bin/bash
+  environment:
+    CHEF_LICENSE: "{{ chef_license }}"
+  register: chef_install
+  changed_when: true

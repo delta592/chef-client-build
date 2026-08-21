@@ -1,0 +1,68 @@
+---
+- name: Ensure Chef source checkout exists for packaging
+  ansible.builtin.stat:
+    path: "{{ chef_src_dir }}/VERSION"
+  register: chef_src_version_file
+
+- name: Fail when Chef source is missing
+  ansible.builtin.assert:
+    that:
+      - chef_src_version_file.stat.exists
+    fail_msg: >-
+      {{ chef_src_dir }} is missing. Run the build play first (make build).
+
+- name: Ensure Docker is installed for per-release packaging
+  ansible.builtin.apt:
+    name: docker.io
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Ensure Docker service is running
+  ansible.builtin.service:
+    name: docker
+    state: started
+    enabled: true
+
+- name: Prepare packaging directories on the build host
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+  loop:
+    - "{{ chef_package_outdir }}"
+    - "{{ chef_package_work_root }}"
+
+- name: Install container packaging script on the build host
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/scripts/package-deb.sh"
+    dest: "{{ chef_package_script_remote }}"
+    mode: "0755"
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+
+- name: Select Ubuntu packaging targets
+  ansible.builtin.set_fact:
+    chef_package_selected_targets: >-
+      {{
+        chef_package_targets
+        | selectattr('release', 'in', chef_package_releases)
+        | list
+      }}
+
+- name: Fail when no packaging targets match chef_package_releases
+  ansible.builtin.assert:
+    that:
+      - chef_package_selected_targets | length > 0
+    fail_msg: >-
+      No targets matched chef_package_releases={{ chef_package_releases }}.
+      Known releases: {{ chef_package_targets | map(attribute='release') | list }}
+
+- name: Build per-release Ubuntu packages in Docker
+  ansible.builtin.include_tasks: build_one_release.yml
+  loop: "{{ chef_package_selected_targets }}"
+  loop_control:
+    label: "ubuntu {{ item.release }} ({{ item.codename }})"
+    loop_var: package_target

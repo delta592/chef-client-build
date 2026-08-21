@@ -1,0 +1,94 @@
+---
+- name: Check whether hab binary is present
+  ansible.builtin.stat:
+    path: /usr/local/bin/hab
+  register: hab_bin
+
+# Habitat 2.x install.sh finishes with `hab pkg install chef/hab` against
+# SaaS Builder (needs HAB_AUTH_TOKEN). For a local-only install we place the
+# verified CLI binary from packages.chef.io and skip Builder entirely.
+- name: Install Habitat CLI binary from packages.chef.io
+  when: not hab_bin.stat.exists
+  block:
+    - name: Create temporary download directory
+      ansible.builtin.file:
+        path: /tmp/hab-cli-install
+        state: directory
+        mode: "0755"
+
+    - name: Download Habitat CLI archive
+      ansible.builtin.get_url:
+        url: https://packages.chef.io/files/stable/habitat/latest/hab-x86_64-linux.tar.gz
+        dest: /tmp/hab-cli-install/hab-x86_64-linux.tar.gz
+        mode: "0644"
+
+    - name: Download Habitat CLI shasum
+      ansible.builtin.get_url:
+        url: https://packages.chef.io/files/stable/habitat/latest/hab-x86_64-linux.tar.gz.sha256sum
+        dest: /tmp/hab-cli-install/hab-x86_64-linux.tar.gz.sha256sum
+        mode: "0644"
+
+    - name: Verify Habitat CLI archive checksum
+      ansible.builtin.shell: |
+        set -euo pipefail
+        cd /tmp/hab-cli-install
+        sha256sum -c hab-x86_64-linux.tar.gz.sha256sum
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Extract and install hab to /usr/local/bin
+      ansible.builtin.shell: |
+        set -euo pipefail
+        cd /tmp/hab-cli-install
+        tar xzf hab-x86_64-linux.tar.gz
+        install -m 0755 hab-*-x86_64-linux/hab /usr/local/bin/hab
+      args:
+        executable: /bin/bash
+      changed_when: true
+
+    - name: Remove temporary download directory
+      ansible.builtin.file:
+        path: /tmp/hab-cli-install
+        state: absent
+
+- name: Accept Habitat license for {{ ansible_user }}
+  become: false
+  ansible.builtin.copy:
+    dest: "/home/{{ ansible_user }}/.hab_license"
+    content: "{{ hab_license }}\n"
+    mode: "0644"
+
+- name: Generate local Habitat origin key if missing
+  become: false
+  ansible.builtin.shell: |
+    set -euo pipefail
+    export HAB_LICENSE="{{ hab_license }}"
+    export HOME="/home/{{ ansible_user }}"
+    key_dir="${HOME}/.hab/cache/keys"
+    mkdir -p "${key_dir}"
+    if ls "${key_dir}/{{ hab_origin }}"-*.sig.key >/dev/null 2>&1; then
+      echo "exists"
+      exit 0
+    fi
+    /usr/local/bin/hab origin key generate "{{ hab_origin }}"
+    echo "created"
+  args:
+    executable: /bin/bash
+  register: hab_origin_key
+  changed_when: "'created' in hab_origin_key.stdout"
+  environment:
+    HAB_LICENSE: "{{ hab_license }}"
+    HOME: "/home/{{ ansible_user }}"
+
+- name: Persist HAB_ORIGIN for interactive shells
+  become: false
+  ansible.builtin.blockinfile:
+    path: "/home/{{ ansible_user }}/.bashrc"
+    create: true
+    marker: "# {mark} ANSIBLE MANAGED HABITAT"
+    block: |
+      export HAB_LICENSE="{{ hab_license }}"
+      export HAB_ORIGIN="{{ hab_origin }}"
+      export CHEF_LICENSE="{{ chef_license }}"
+      export PATH="/usr/local/bin:$PATH"

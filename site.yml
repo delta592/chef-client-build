@@ -1,0 +1,40 @@
+---
+- name: Build Chef Infra Client 19.x from source (local gem build)
+  hosts: chef_builders
+  gather_facts: true
+
+  pre_tasks:
+    - name: Fail unless target is x86_64/amd64
+      ansible.builtin.assert:
+        that:
+          - ansible_facts['architecture'] in ['x86_64', 'amd64']
+        fail_msg: >-
+          This playbook only supports x86_64/amd64. Detected
+          '{{ ansible_facts['architecture'] }}'.
+        success_msg: "Architecture check passed ({{ ansible_facts['architecture'] }})."
+
+  roles:
+    - role: build_deps
+      tags: [bootstrap, apt]
+    - role: rbenv
+      tags: [bootstrap, ruby, rbenv]
+    - role: habitat
+      tags: [bootstrap, habitat, hab]
+    - role: chef_source_build
+      tags: [build, chef]
+
+- name: Validate chef-client after build
+  hosts: chef_builders
+  gather_facts: false
+  tags: [validate]
+  roles:
+    - role: chef_validate
+      tags: [validate]
+
+- name: Package chef-client as a local Ubuntu .deb
+  hosts: chef_builders
+  gather_facts: false
+  tags: [package]
+  roles:
+    - role: chef_package
+      tags: [package]

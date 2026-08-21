@@ -1,0 +1,97 @@
+---
+- name: Install rbenv for {{ ansible_user }}
+  become: false
+  block:
+    - name: Clone rbenv
+      ansible.builtin.git:
+        repo: "{{ rbenv_repo }}"
+        dest: "{{ rbenv_root }}"
+        version: master
+        update: true
+
+    - name: Clone ruby-build plugin
+      ansible.builtin.git:
+        repo: "{{ ruby_build_repo }}"
+        dest: "{{ rbenv_root }}/plugins/ruby-build"
+        version: master
+        update: true
+
+    - name: Ensure bashrc loads rbenv
+      ansible.builtin.blockinfile:
+        path: "/home/{{ ansible_user }}/.bashrc"
+        create: true
+        marker: "# {mark} ANSIBLE MANAGED RBENV"
+        block: |
+          export RBENV_ROOT="{{ rbenv_root }}"
+          export PATH="$RBENV_ROOT/bin:$PATH"
+          if command -v rbenv >/dev/null 2>&1; then
+            eval "$(rbenv init - bash)"
+          fi
+
+    - name: Ensure profile loads rbenv for login shells
+      ansible.builtin.blockinfile:
+        path: "/home/{{ ansible_user }}/.profile"
+        create: true
+        marker: "# {mark} ANSIBLE MANAGED RBENV"
+        block: |
+          export RBENV_ROOT="{{ rbenv_root }}"
+          export PATH="$RBENV_ROOT/bin:$PATH"
+          if command -v rbenv >/dev/null 2>&1; then
+            eval "$(rbenv init - bash)"
+          fi
+
+    - name: Resolve Ruby version to install
+      ansible.builtin.shell: |
+        set -euo pipefail
+        export PATH="{{ rbenv_root }}/bin:$PATH"
+        if [ "{{ rbenv_ruby_version }}" = "latest" ]; then
+          rbenv install -l | awk '/^[0-9]+\.[0-9]+\.[0-9]+$/' | sort -V | tail -n1
+        else
+          echo "{{ rbenv_ruby_version }}"
+        fi
+      args:
+        executable: /bin/bash
+      register: resolved_ruby_version
+      changed_when: false
+
+    - name: Set resolved Ruby version fact
+      ansible.builtin.set_fact:
+        rbenv_ruby_version_resolved: "{{ resolved_ruby_version.stdout | trim }}"
+
+    - name: Install Ruby {{ rbenv_ruby_version_resolved }}
+      ansible.builtin.shell: |
+        set -euo pipefail
+        export PATH="{{ rbenv_root }}/bin:$PATH"
+        eval "$(rbenv init - bash)"
+        if rbenv versions --bare | grep -qx "{{ rbenv_ruby_version_resolved }}"; then
+          echo "already_installed"
+          exit 0
+        fi
+        RUBY_CONFIGURE_OPTS="--disable-install-doc" rbenv install "{{ rbenv_ruby_version_resolved }}"
+        echo "installed"
+      args:
+        executable: /bin/bash
+      register: ruby_install
+      changed_when: "'installed' in ruby_install.stdout"
+
+    - name: Set global Ruby version
+      ansible.builtin.shell: |
+        set -euo pipefail
+        export PATH="{{ rbenv_root }}/bin:$PATH"
+        eval "$(rbenv init - bash)"
+        rbenv global "{{ rbenv_ruby_version_resolved }}"
+        rbenv rehash
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Install bundler matching Chef Gemfile.lock
+      ansible.builtin.shell: |
+        set -euo pipefail
+        export PATH="{{ rbenv_root }}/bin:$PATH"
+        eval "$(rbenv init - bash)"
+        gem install bundler --version 2.6.9 --no-document
+        rbenv rehash
+      args:
+        executable: /bin/bash
+      changed_when: true

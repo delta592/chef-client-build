@@ -1,0 +1,82 @@
+---
+- name: Ensure per-release work and output directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+  loop:
+    - "{{ chef_package_outdir }}/ubuntu-{{ package_target.release }}"
+    - "{{ chef_package_work_root }}/ubuntu-{{ package_target.release }}"
+
+- name: Pull Ubuntu {{ package_target.release }} container image
+  ansible.builtin.command:
+    argv:
+      - docker
+      - pull
+      - "{{ package_target.image }}"
+  register: docker_pull
+  changed_when: >-
+    ('Downloaded newer image' in docker_pull.stdout) or
+    ('Pull complete' in docker_pull.stdout) or
+    ('Status: Downloaded newer image' in docker_pull.stdout)
+
+- name: Build chef-infra-client .deb for Ubuntu {{ package_target.release }}
+  ansible.builtin.command:
+    argv:
+      - docker
+      - run
+      - --rm
+      - --name
+      - "chef-pkg-{{ package_target.codename }}"
+      - -e
+      - "UBUNTU_RELEASE={{ package_target.release }}"
+      - -e
+      - "UBUNTU_CODENAME={{ package_target.codename }}"
+      - -e
+      - "CHEF_VERSION={{ chef_package_version }}"
+      - -e
+      - "RUBY_VERSION={{ rbenv_ruby_version }}"
+      - -e
+      - "PACKAGE_NAME={{ chef_package_name }}"
+      - -e
+      - "PACKAGE_ARCH={{ chef_package_arch }}"
+      - -e
+      - "CHEF_LICENSE={{ chef_license }}"
+      - -e
+      - "RUNTIME_DEPENDS={{ package_target.runtime_depends | join(',') }}"
+      - -e
+      - "PREFIX={{ chef_install_prefix }}"
+      - -v
+      - "{{ chef_src_dir }}:/src:ro"
+      - -v
+      - "{{ chef_package_outdir }}/ubuntu-{{ package_target.release }}:/out"
+      - -v
+      - "{{ chef_package_work_root }}/ubuntu-{{ package_target.release }}:/work"
+      - -v
+      - "{{ chef_package_script_remote }}:/package-deb.sh:ro"
+      - -v
+      - "chef-infra-client-prefix-{{ package_target.codename }}:{{ chef_install_prefix }}"
+      - "{{ package_target.image }}"
+      - bash
+      - /package-deb.sh
+  register: docker_package_build
+  changed_when: true
+
+- name: Record expected .deb path for Ubuntu {{ package_target.release }}
+  ansible.builtin.set_fact:
+    chef_package_deb_path: "{{ chef_package_outdir }}/ubuntu-{{ package_target.release }}/{{ chef_package_name }}_{{ chef_package_version }}~ubuntu{{ package_target.release }}_{{ chef_package_arch }}.deb"
+
+- name: Confirm .deb exists for Ubuntu {{ package_target.release }}
+  ansible.builtin.stat:
+    path: "{{ chef_package_deb_path }}"
+  register: chef_deb_stat
+
+- name: Fail when Ubuntu {{ package_target.release }} .deb was not produced
+  ansible.builtin.assert:
+    that:
+      - chef_deb_stat.stat.exists
+      - chef_deb_stat.stat.size > 0
+    fail_msg: "Expected package missing: {{ chef_package_deb_path }}"
+    success_msg: "Built {{ chef_package_deb_path }} ({{ (chef_deb_stat.stat.size / 1048576) | round(1) }} MiB)"

@@ -1,0 +1,23 @@
+---
+- name: Run chef-client --version
+  become: false
+  ansible.builtin.shell: |
+    set -euo pipefail
+    export PATH="{{ rbenv_root }}/bin:$PATH"
+    eval "$(rbenv init - bash)"
+    export CHEF_LICENSE="{{ chef_license }}"
+    chef-client --version
+  args:
+    executable: /bin/bash
+  register: chef_client_version
+  changed_when: false
+  failed_when: chef_client_version.rc != 0
+
+- name: Assert chef-client version matches expected release
+  ansible.builtin.assert:
+    that:
+      - (chef_git_version | regex_replace('^v', '')) in chef_client_version.stdout
+    fail_msg: >-
+      chef-client --version did not report {{ chef_git_version | regex_replace('^v', '') }}.
+      Got: {{ chef_client_version.stdout | default('(empty)') }}
+    success_msg: "Validated {{ chef_client_version.stdout }}"
